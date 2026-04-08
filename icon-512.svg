@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="512" height="512">
+  <rect width="512" height="512" rx="40" fill="#D97757"/>
+  <text x="96" y="82" font-family="serif" font-size="52" font-weight="bold" fill="#FFF8F5" text-anchor="middle" dominant-baseline="middle" font-style="italic">my</text>
+  <text x="96" y="132" font-family="sans-serif" font-size="28" font-weight="bold" fill="white" text-anchor="middle">Health+</text>
+</svg>

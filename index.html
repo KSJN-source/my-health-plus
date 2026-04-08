@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="Health+"/>
+  <meta name="theme-color" content="#D97757"/>
+  <meta name="description" content="AI-powered personal health records"/>
+
+  <title>My Health Plus</title>
+
+  <link rel="manifest" href="manifest.json"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png"/>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body, #root {
+      height: 100%;
+      width: 100%;
+      background: #FFF8F5;
+      overscroll-behavior: none;
+    }
+    body {
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    #splash {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #D97757;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px;
+      transition: opacity 0.5s ease;
+    }
+    #splash.hidden { opacity: 0; pointer-events: none; }
+    #splash-title {
+      font-family: Georgia, serif;
+      font-size: 42px; font-weight: bold;
+      color: #1A2744; letter-spacing: -1px;
+    }
+    #splash-sub {
+      font-family: -apple-system, sans-serif;
+      font-size: 16px; font-weight: 600;
+      color: rgba(255,255,255,0.85);
+    }
+    #splash-dot {
+      width: 40px; height: 4px;
+      background: rgba(255,255,255,0.4);
+      border-radius: 2px; overflow: hidden;
+    }
+    #splash-dot::after {
+      content: '';
+      display: block; width: 50%; height: 100%;
+      background: white; border-radius: 2px;
+      animation: slide 1s ease-in-out infinite alternate;
+    }
+    @keyframes slide { from { transform: translateX(0); } to { transform: translateX(100%); } }
+
+    /* Install prompt banner */
+    #install-banner {
+      display: none;
+      position: fixed; bottom: 80px; left: 16px; right: 16px; z-index: 200;
+      background: #1A2138; color: white;
+      border-radius: 14px; padding: 14px 16px;
+      align-items: center; gap: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      animation: slideUp 0.3s ease;
+    }
+    #install-banner.show { display: flex; }
+    #install-banner p { flex: 1; font-size: 13px; line-height: 1.4; }
+    #install-banner button {
+      background: #D97757; color: white; border: none;
+      border-radius: 8px; padding: 8px 14px;
+      font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    }
+    #install-close {
+      background: transparent !important; padding: 4px !important;
+      color: rgba(255,255,255,0.5) !important; font-size: 18px !important;
+    }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    /* iOS install tip */
+    #ios-tip {
+      display: none;
+      position: fixed; bottom: 80px; left: 16px; right: 16px; z-index: 200;
+      background: #1A2138; color: white;
+      border-radius: 14px; padding: 14px 16px;
+      font-size: 13px; line-height: 1.6;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    #ios-tip.show { display: block; }
+    #ios-tip strong { color: #D97757; }
+
+    ::-webkit-scrollbar { display: none; }
+    scrollbar-width: none;
+  </style>
+</head>
+<body>
+
+<div id="splash">
+  <div id="splash-title">my Health+</div>
+  <div id="splash-sub">Loading your health records…</div>
+  <div id="splash-dot"></div>
+</div>
+
+<div id="root"></div>
+
+<!-- iOS install tip (shown once) -->
+<div id="ios-tip">
+  To install: tap <strong>Share ↑</strong> then <strong>Add to Home Screen</strong>
+  <br/><button onclick="document.getElementById('ios-tip').classList.remove('show'); localStorage.setItem('ios-tip-shown','1')" style="margin-top:8px;background:#D97757;color:white;border:none;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:600">Got it</button>
+</div>
+
+<!-- Android/desktop install prompt -->
+<div id="install-banner">
+  <p>Install <strong>My Health Plus</strong> on your home screen for the best experience.</p>
+  <button id="install-btn">Install</button>
+  <button id="install-close" onclick="document.getElementById('install-banner').classList.remove('show'); localStorage.setItem('install-dismissed','1')">✕</button>
+</div>
+
+<!-- CDN dependencies -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js"></script>
+
+<!-- App -->
+<script type="text/babel" src="app.jsx" data-type="module"></script>
+
+<script>
+// Mount after Babel transpiles the app
+window.addEventListener('load', () => {
+  // Give Babel a tick to compile
+  setTimeout(() => {
+    try {
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(React.createElement(MyHealthPlus));
+      setTimeout(() => {
+        const s = document.getElementById('splash');
+        if (s) s.classList.add('hidden');
+        setTimeout(() => s && s.remove(), 600);
+      }, 600);
+    } catch(e) {
+      document.getElementById('splash').innerHTML =
+        '<p style="color:white;padding:20px;text-align:center;font-size:14px">Failed to load app.<br/>' + e.message + '</p>';
+    }
+  }, 100);
+});
+
+// Service Worker
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').then(r => {
+      console.log('SW registered');
+    }).catch(e => console.log('SW failed:', e));
+  });
+}
+
+// PWA Install prompt
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  if (!localStorage.getItem('install-dismissed')) {
+    setTimeout(() => document.getElementById('install-banner').classList.add('show'), 3000);
+  }
+});
+
+document.getElementById('install-btn')?.addEventListener('click', async () => {
+  document.getElementById('install-banner').classList.remove('show');
+  if (deferredPrompt) {
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    if (outcome === 'accepted') localStorage.setItem('install-dismissed', '1');
+  }
+});
+
+// iOS install tip (Safari doesn't support beforeinstallprompt)
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+if (isIOS && !isStandalone && !localStorage.getItem('ios-tip-shown')) {
+  setTimeout(() => document.getElementById('ios-tip').classList.add('show'), 4000);
+}
+</script>
+</body>
+</html>
