@@ -2840,3 +2840,22 @@ function MyHealthPlus() {
     </div>
   );
 }
+window.MyHealthPlus = MyHealthPlus;
+
+// Auto-mount when Babel finishes compiling this script
+(function() {
+  function mount() {
+    var root = document.getElementById('root');
+    if (!root) return;
+    ReactDOM.createRoot(root).render(React.createElement(MyHealthPlus));
+    setTimeout(function() {
+      var s = document.getElementById('splash');
+      if (s) { s.classList.add('hidden'); setTimeout(function(){ s.remove(); }, 600); }
+    }, 400);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mount);
+  } else {
+    mount();
+  }
+})();
