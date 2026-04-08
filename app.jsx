@@ -894,7 +894,7 @@ function MyHealthPlus() {
     setEditName(""); setEditAge(""); setEditSex(""); setEditPhone(""); setEditAddress("");
     setFileQueue([]); setQueueIndex(0); setBatchMode(null); setSinglePatientId(null);
     
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    try { if (fileInputRef.current) fileInputRef.current.value = ""; } catch(e) {}
   };
   const processFile = useCallback(async (file) => {
     if (!file) return;
@@ -1267,14 +1267,13 @@ function MyHealthPlus() {
         </div>
         {/* SELECT FILE */}
         {uploadStep === "select" && (<>
-          <div onClick={() => fileInputRef.current?.click()} style={{ border: "2px dashed " + theme.primary + "40", borderRadius: 16, padding: 40, textAlign: "center", cursor: "pointer", background: theme.primary + "05", marginBottom: 16 }}>
+          <label htmlFor="mhp-file-input" style={{ display: "block", border: "2px dashed " + theme.primary + "40", borderRadius: 16, padding: 40, textAlign: "center", cursor: "pointer", background: theme.primary + "05", marginBottom: 16 }}>
             <div style={{ width: 64, height: 64, borderRadius: 20, background: theme.primary + "15", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><Icon type="upload" size={28} color={theme.primary}/></div>
             <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: theme.text, marginBottom: 6 }}>Tap to select reports</p>
             <p style={{ margin: 0, fontSize: 13, color: theme.textSecondary }}>PDF, Word (.docx), JPEG, PNG — select multiple</p>
-            <input ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.heic,.heif,.bmp,.gif,application/pdf,image/*,.tiff,.tif" style={{ display: "none" }} onChange={(e) => {
+            <input id="mhp-file-input" ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.heic,.heif,.bmp,.gif,application/pdf,image/*,.tiff,.tif" style={{ position: "absolute", opacity: 0, width: 0, height: 0, pointerEvents: "none" }} onChange={(e) => {
               const files = Array.from(e.target.files || []);
               if (files.length === 0) return;
-              
               e.target.value = "";
               setFileQueue(files);
               setQueueIndex(0);
@@ -1285,7 +1284,7 @@ function MyHealthPlus() {
                 processFile(files[0]);
               }
             }}/>
-          </div>
+          </label>
           <div style={{ background: theme.primary + "08", borderRadius: 12, padding: 14, display: "flex", gap: 10, alignItems: "flex-start" }}>
             <Icon type="ai" size={20} color={theme.primary}/>
             <div>
