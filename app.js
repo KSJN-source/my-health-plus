@@ -52,15 +52,39 @@ function readAsArrayBuffer(file) {
     reader.readAsArrayBuffer(file);
   });
 }
-function getApiKey() {
-  return localStorage.getItem('mhp_api_key') || '';
+const GEMINI_KEY = 'AIzaSyAno217DPl53I4K5xrXx21C0fKAEoZys4g';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_KEY;
+async function callGemini(parts, maxTokens) {
+  maxTokens = maxTokens || 8192;
+  const response = await fetch(GEMINI_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      contents: [{
+        parts: parts
+      }],
+      generationConfig: {
+        maxOutputTokens: maxTokens,
+        temperature: 0.1
+      }
+    })
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error('Gemini error ' + response.status + ': ' + (err.error?.message || 'unknown'));
+  }
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
 }
-function apiHeaders() {
+function geminiImagePart(base64, mimeType) {
   return {
-    'Content-Type': 'application/json',
-    'x-api-key': getApiKey(),
-    'anthropic-version': '2023-06-01',
-    'anthropic-dangerous-direct-browser-access': 'true'
+    inline_data: {
+      mime_type: mimeType || 'image/jpeg',
+      data: base64
+    }
   };
 }
 async function extractTextFromPDF(file) {
@@ -135,130 +159,69 @@ function detectFileType(file) {
 }
 async function parseWithAI(content, isImage = false, imageBase64 = null, mimeType = null) {
   const instructions = `Extract patient info and test results from a medical/lab report. Respond ONLY with valid JSON — no markdown, no backticks, no explanation.
+
 Schema:
 {"patient":{"name":"","age":"","sex":"","phone":"","address":"","dateOfBirth":"","referredBy":""},"lab":{"name":"","date":""},"testGroups":[{"group":"Group Name","tests":[{"name":"Test Name","value":"number","unit":"unit","range":"ref range","status":"normal|high|low"}]}]}
+
 Rules:
 - Extract name, age, sex, phone, address from patient info area
-- age: extract number from "45/M", "32 Yrs", "Age: 45 Years", or calculate from DOB
-- sex: extract from "Sex", "Gender", or combined fields like "45/M" = Male
-- phone: any 10-digit number near patient details
+- age: extract number only
 - Process EVERY page, extract EVERY test result
-- Group tests by their panel headers (CBC, Lipid Profile, LFT, etc.)
-- status: "high" if above range, "low" if below, "normal" if within
-- Keep values concise — numbers only, no extra text
+- Group tests by panel headers (CBC, Lipid Profile, LFT, etc.)
+- status: high if above range, low if below, normal if within
 - Output ONLY the JSON object`;
-  const userText = "Extract ALL patient info and ALL test results. Return ONLY valid JSON.";
-  const messages = [];
+  const parts = [];
   if (isImage && imageBase64) {
-    const isPdf = mimeType && mimeType.includes("pdf");
-    const contentBlocks = [];
-    if (isPdf) {
-      contentBlocks.push({
-        type: "document",
-        source: {
-          type: "base64",
-          media_type: "application/pdf",
-          data: imageBase64
-        }
-      });
-    } else {
-      contentBlocks.push({
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: mimeType || "image/jpeg",
-          data: imageBase64
-        }
-      });
-    }
-    contentBlocks.push({
-      type: "text",
-      text: instructions + "\n\n" + userText
-    });
-    messages.push({
-      role: "user",
-      content: contentBlocks
-    });
+    parts.push(geminiImagePart(imageBase64, mimeType));
   } else {
-    const truncated = content && content.length > 80000 ? content.slice(0, 80000) + "\n...[TRUNCATED]" : content;
-    messages.push({
-      role: "user",
-      content: instructions + "\n\n" + userText + "\n\n---REPORT TEXT---\n" + truncated + "\n---END---"
+    const truncated = content && content.length > 60000 ? content.slice(0, 60000) + '...[TRUNCATED]' : content;
+    parts.push({
+      text: '---REPORT TEXT---\n' + truncated + '\n---END---'
     });
   }
-  let response;
+  parts.push({
+    text: instructions + '\n\nExtract ALL patient info and ALL test results. Return ONLY valid JSON.'
+  });
+  let text;
   try {
-    response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: apiHeaders(),
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 8192,
-        system: "You are a lab report data extractor. Output ONLY compact valid JSON. No prose, no markdown, no explanations. Be concise — short string values only.",
-        messages
-      })
-    });
+    text = await callGemini(parts, 8192);
   } catch (fetchErr) {
-    throw new Error("Network request failed: " + (fetchErr.message || "Could not connect to AI service"));
+    throw new Error('Network request failed: ' + (fetchErr.message || 'Could not connect to AI service'));
   }
-  let data;
-  try {
-    data = await response.json();
-  } catch (jsonErr) {
-    throw new Error("API response not readable (status " + response.status + ")");
-  }
-  if (!response.ok) throw new Error(data.error?.message || `API error: ${response.status}`);
-  if (data.error) throw new Error(data.error.message || "API error");
-  const text = data.content?.map(b => b.text || "").join("") || "";
-  const stopReason = data.stop_reason || "";
-  if (stopReason === "max_tokens") {
-    console.warn("AI response was truncated (hit max_tokens). Some tests may be missing.");
-  }
-  let cleaned = text.replace(/```json|```/g, "").trim();
-  const jsonStart = cleaned.indexOf("{");
-  const jsonEnd = cleaned.lastIndexOf("}");
-  if (jsonStart === -1 || jsonEnd === -1) throw new Error("No JSON found in AI response");
+  let cleaned = text.replace(/```json|```/g, '').trim();
+  const jsonStart = cleaned.indexOf('{');
+  const jsonEnd = cleaned.lastIndexOf('}');
+  if (jsonStart === -1 || jsonEnd === -1) throw new Error('No JSON found in AI response');
   cleaned = cleaned.slice(jsonStart, jsonEnd + 1);
-  cleaned = cleaned.replace(/,\s*([}\]])/g, "$1");
+  cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
   try {
     return JSON.parse(cleaned);
   } catch (parseErr) {
     let fixed = cleaned;
-    let openBraces = (fixed.match(/{/g) || []).length;
-    let closeBraces = (fixed.match(/}/g) || []).length;
-    let openBrackets = (fixed.match(/\[/g) || []).length;
-    let closeBrackets = (fixed.match(/\]/g) || []).length;
-    const lastComplete = Math.max(fixed.lastIndexOf("},"), fixed.lastIndexOf("}]"), fixed.lastIndexOf("\"}"));
-    if (lastComplete > fixed.length * 0.5) {
-      fixed = fixed.slice(0, lastComplete + 1);
-    }
-    fixed = fixed.replace(/,\s*"[^"]*"?\s*:?\s*("?[^"{}[\]]*)?$/g, "");
-    fixed = fixed.replace(/,\s*{[^}]*$/g, "");
-    fixed = fixed.replace(/,\s*$/g, "");
-    openBraces = (fixed.match(/{/g) || []).length;
-    closeBraces = (fixed.match(/}/g) || []).length;
-    openBrackets = (fixed.match(/\[/g) || []).length;
-    closeBrackets = (fixed.match(/\]/g) || []).length;
-    for (let i = 0; i < openBrackets - closeBrackets; i++) fixed += "]";
-    for (let i = 0; i < openBraces - closeBraces; i++) fixed += "}";
-    fixed = fixed.replace(/,\s*([}\]])/g, "$1");
+    fixed = fixed.replace(/,\s*"[^"]*"?\s*:?\s*("?[^"{}[\]]*)?$/g, '');
+    fixed = fixed.replace(/,\s*{[^}]*$/g, '');
+    fixed = fixed.replace(/,\s*$/g, '');
+    const ob = (fixed.match(/{/g) || []).length,
+      cb = (fixed.match(/}/g) || []).length;
+    const oB = (fixed.match(/\[/g) || []).length,
+      cB = (fixed.match(/\]/g) || []).length;
+    for (let i = 0; i < oB - cB; i++) fixed += ']';
+    for (let i = 0; i < ob - cb; i++) fixed += '}';
+    fixed = fixed.replace(/,\s*([}\]])/g, '$1');
     try {
       return JSON.parse(fixed);
     } catch (e) {
-      const nameMatch = text.match(/"name"\s*:\s*"([^"]+)"/);
-      const ageMatch = text.match(/"age"\s*:\s*"?(\d+)"?/);
-      const sexMatch = text.match(/"sex"\s*:\s*"([^"]+)"/);
       return {
         patient: {
-          name: nameMatch?.[1] || "",
-          age: ageMatch?.[1] || "",
-          sex: sexMatch?.[1] || "",
-          phone: "",
-          address: ""
+          name: '',
+          age: '',
+          sex: '',
+          phone: '',
+          address: ''
         },
         lab: {
-          name: "",
-          date: ""
+          name: '',
+          date: ''
         },
         tests: [],
         testGroups: []
@@ -270,261 +233,91 @@ async function detectReportType(content, isImage, imageBase64, mimeType) {
   const imagingKeywords = /\b(mri|ct scan|computed tomography|magnetic resonance|ultrasound|x-ray|xray|radiograph|mammograph|pet scan|bone scan|doppler|sonograph|echocardiograph|fluoroscopy|angiograph|scintigraph)\b/i;
   const clinicalKeywords = /(discharge summary|inpatient|outpatient|op note|admission note|clinical note|consultation note|admitted on|date of admission|date of discharge|chief complaint|history of present illness|past medical history|plan of care|follow.up|on examination|provisional diagnosis|final diagnosis|advised to)/i;
   if (!isImage && content) {
-    if (clinicalKeywords.test(content)) return "clinical_note";
-    if (imagingKeywords.test(content)) return "imaging";
+    if (clinicalKeywords.test(content)) return 'clinical_note';
+    if (imagingKeywords.test(content)) return 'imaging';
   }
-  if (isImage || !content) {
-    try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: apiHeaders(),
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 20,
-          system: "Respond with exactly one word: imaging, clinical_note, or lab.",
-          messages: [{
-            role: "user",
-            content: isImage && imageBase64 ? [mimeType?.includes("pdf") ? {
-              type: "document",
-              source: {
-                type: "base64",
-                media_type: "application/pdf",
-                data: imageBase64
-              }
-            } : {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: mimeType || "image/jpeg",
-                data: imageBase64
-              }
-            }, {
-              type: "text",
-              text: "Classify this medical document with one word:\n- imaging: radiology report (MRI, CT, X-ray, Ultrasound)\n- clinical_note: discharge summary, OP note, inpatient note, consultation\n- lab: blood/lab test report"
-            }] : [{
-              type: "text",
-              text: "Classify: imaging, clinical_note, or lab?\n\n" + (content || "").slice(0, 600)
-            }]
-          }]
-        })
-      });
-      const d = await resp.json();
-      const answer = (d.content?.[0]?.text || "").toLowerCase().trim();
-      if (answer.includes("clinical_note") || answer.includes("clinical note")) return "clinical_note";
-      if (answer.includes("imaging")) return "imaging";
-    } catch (e) {}
-  }
-  return "lab";
+  const parts = [];
+  if (isImage && imageBase64) parts.push(geminiImagePart(imageBase64, mimeType));else parts.push({
+    text: (content || '').slice(0, 600)
+  });
+  parts.push({
+    text: "Classify this medical document with one word: 'imaging' (radiology report), 'clinical_note' (discharge summary/OP note/inpatient note), or 'lab' (blood/lab test report). Reply with ONE word only."
+  });
+  try {
+    const answer = (await callGemini(parts, 10)).toLowerCase().trim();
+    if (answer.includes('clinical_note') || answer.includes('clinical note')) return 'clinical_note';
+    if (answer.includes('imaging')) return 'imaging';
+  } catch (e) {}
+  return 'lab';
 }
 async function parseImagingReport(content, isImage, imageBase64, mimeType) {
-  const instructions = `You are analyzing a radiology/imaging report (MRI, CT, Ultrasound, X-ray, etc.). Extract patient info and summarize findings. Respond ONLY with valid JSON — no markdown, no backticks.
+  const instructions = `Analyze this radiology/imaging report. Respond ONLY with valid JSON — no markdown, no backticks.
+
 Schema:
-{"patient":{"name":"","age":"","sex":"","phone":"","address":"","dateOfBirth":"","referredBy":""},"lab":{"name":"","date":""},"imaging":{"modality":"MRI|CT|Ultrasound|X-Ray|PET|Other","bodyPart":"e.g. Brain, Abdomen, Chest","clinicalHistory":"","technique":"","normalFindings":["finding1","finding2"],"abnormalFindings":["finding1","finding2"],"impression":"Overall impression from radiologist"}}
+{"patient":{"name":"","age":"","sex":"","phone":"","address":"","dateOfBirth":"","referredBy":""},"lab":{"name":"","date":""},"imaging":{"modality":"MRI|CT|Ultrasound|X-Ray|PET|Other","bodyPart":"","clinicalHistory":"","technique":"","normalFindings":["finding1"],"abnormalFindings":["finding1"],"impression":""}}
+
 Rules:
-- modality: the imaging type (MRI, CT Scan, Ultrasound, X-Ray, etc.)
-- bodyPart: the body region examined
-- normalFindings: list each structure/organ that appears normal — one per item, concise
-- abnormalFindings: list each abnormal finding — one per item, include severity/size if mentioned
-- impression: copy the radiologist's final impression/conclusion verbatim if present
+- normalFindings: each normal structure/organ as one item
+- abnormalFindings: each abnormal finding with severity/size
+- impression: copy radiologist conclusion verbatim
 - Output ONLY the JSON object`;
-  const userText = "Extract patient info and summarize all imaging findings. Return ONLY valid JSON.";
-  const messages = [];
-  if (isImage && imageBase64) {
-    const contentBlocks = [mimeType?.includes("pdf") ? {
-      type: "document",
-      source: {
-        type: "base64",
-        media_type: "application/pdf",
-        data: imageBase64
-      }
-    } : {
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: mimeType || "image/jpeg",
-        data: imageBase64
-      }
-    }, {
-      type: "text",
-      text: instructions + "\n\n" + userText
-    }];
-    messages.push({
-      role: "user",
-      content: contentBlocks
-    });
-  } else {
-    const truncated = content && content.length > 80000 ? content.slice(0, 80000) + "\n...[TRUNCATED]" : content;
-    messages.push({
-      role: "user",
-      content: instructions + "\n\n" + userText + "\n\n---REPORT TEXT---\n" + truncated + "\n---END---"
-    });
-  }
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: apiHeaders(),
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      system: "You are a radiology report summarizer. Output ONLY compact valid JSON.",
-      messages
-    })
+  const parts = [];
+  if (isImage && imageBase64) parts.push(geminiImagePart(imageBase64, mimeType));else parts.push({
+    text: '---REPORT---\n' + (content || '').slice(0, 60000) + '\n---END---'
   });
-  if (!response.ok) throw new Error("API error: " + response.status);
-  const data = await response.json();
-  if (data.error) throw new Error(data.error.message);
-  const text = data.content?.map(b => b.text || "").join("") || "";
-  const cleaned = text.replace(/```json|```/g, "").trim();
-  const s = cleaned.indexOf("{"),
-    e = cleaned.lastIndexOf("}");
-  if (s === -1 || e === -1) throw new Error("No JSON in imaging response");
+  parts.push({
+    text: instructions
+  });
+  const text = await callGemini(parts, 4096);
+  const cleaned = text.replace(/```json|```/g, '').trim();
+  const s = cleaned.indexOf('{'),
+    e = cleaned.lastIndexOf('}');
+  if (s === -1 || e === -1) throw new Error('No JSON in imaging response');
   return JSON.parse(cleaned.slice(s, e + 1));
 }
 async function parseClinicalNote(content, isImage, imageBase64, mimeType) {
-  const instructions = `You are analyzing a clinical medical document (outpatient note, inpatient note, or discharge summary). Extract structured data. Respond ONLY with valid JSON — no markdown, no backticks.
+  const instructions = `Analyze this clinical document (discharge summary/OP note/inpatient note). Respond ONLY with valid JSON.
+
 Schema:
-{
-  "patient": {"name":"","age":"","sex":"","phone":"","address":"","dateOfBirth":"","referredBy":"","uhid":""},
-  "visit": {
-    "visitType": "OP|IP",
-    "hospital": "",
-    "department": "",
-    "doctor": "",
-    "admissionDate": "",
-    "dischargeDate": "",
-    "visitDate": "",
-    "chiefComplaint": "",
-    "diagnoses": ["Primary diagnosis", "Secondary if any"],
-    "procedures": ["Procedure 1"],
-    "vitals": {"bp":"","pulse":"","temp":"","spo2":"","weight":"","height":"","rr":""},
-    "allergies": [],
-    "medications": [{"name":"","dose":"","frequency":"","duration":"","route":""}],
-    "followUp": "",
-    "summary": "2-3 sentence plain summary of the visit/admission"
-  },
-  "extractedLabs": [
-    {
-      "date": "YYYY-MM-DD or empty",
-      "labName": "",
-      "testGroups": [{"group":"Group Name","tests":[{"name":"","value":"","unit":"","range":"","status":"normal|high|low"}]}]
-    }
-  ]
-}
+{"patient":{"name":"","age":"","sex":"","phone":"","address":"","dateOfBirth":"","referredBy":"","uhid":""},"visit":{"visitType":"OP|IP","hospital":"","department":"","doctor":"","admissionDate":"","dischargeDate":"","visitDate":"","chiefComplaint":"","diagnoses":["Primary diagnosis"],"procedures":["Procedure"],"vitals":{"bp":"","pulse":"","temp":"","spo2":"","weight":"","height":"","rr":""},"allergies":[],"medications":[{"name":"","dose":"","frequency":"","duration":"","route":""}],"followUp":"","summary":"2-3 sentence plain summary"},"extractedLabs":[{"date":"","labName":"","testGroups":[{"group":"","tests":[{"name":"","value":"","unit":"","range":"","status":"normal|high|low"}]}]}],"lab":{"name":"","date":""}}
+
 Rules:
-- visitType: IP if there is an admission/discharge, OP if outpatient/consultation
-- admissionDate/dischargeDate: for IP stays (DD/MM/YYYY or YYYY-MM-DD)
-- visitDate: for OP notes, the date of visit
-- diagnoses: extract ALL diagnoses listed, primary first
-- medications: extract every medication with dose if mentioned
-- extractedLabs: if the note contains any lab results (CBC, LFT, blood sugar etc.), extract them grouped by panel; use the date the test was done if mentioned, otherwise leave empty
-- If no labs are present, return extractedLabs as []
-- summary: brief plain-English summary of why patient came and what happened
+- visitType: IP if admission/discharge dates present, else OP
+- diagnoses: all diagnoses, primary first
+- medications: every medication with dose if mentioned
+- extractedLabs: extract lab results grouped by panel with individual dates; empty array if none
+- summary: brief plain-English summary
 - Output ONLY the JSON object`;
-  const userText = "Extract all clinical information and any embedded lab results. Return ONLY valid JSON.";
-  const messages = [];
-  if (isImage && imageBase64) {
-    const contentBlocks = [mimeType?.includes("pdf") ? {
-      type: "document",
-      source: {
-        type: "base64",
-        media_type: "application/pdf",
-        data: imageBase64
-      }
-    } : {
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: mimeType || "image/jpeg",
-        data: imageBase64
-      }
-    }, {
-      type: "text",
-      text: instructions + "\n\n" + userText
-    }];
-    messages.push({
-      role: "user",
-      content: contentBlocks
-    });
-  } else {
-    const truncated = content && content.length > 80000 ? content.slice(0, 80000) + "\n...[TRUNCATED]" : content;
-    messages.push({
-      role: "user",
-      content: instructions + "\n\n" + userText + "\n\n---DOCUMENT TEXT---\n" + truncated + "\n---END---"
-    });
-  }
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: apiHeaders(),
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 8192,
-      system: "You are a clinical document parser. Output ONLY compact valid JSON. Be thorough with lab extraction.",
-      messages
-    })
+  const parts = [];
+  if (isImage && imageBase64) parts.push(geminiImagePart(imageBase64, mimeType));else parts.push({
+    text: '---DOCUMENT---\n' + (content || '').slice(0, 60000) + '\n---END---'
   });
-  if (!response.ok) throw new Error("API error: " + response.status);
-  const data = await response.json();
-  if (data.error) throw new Error(data.error.message);
-  const text = data.content?.map(b => b.text || "").join("") || "";
-  const cleaned = text.replace(/```json|```/g, "").trim();
-  const s = cleaned.indexOf("{"),
-    e = cleaned.lastIndexOf("}");
-  if (s === -1 || e === -1) throw new Error("No JSON in clinical note response");
+  parts.push({
+    text: instructions
+  });
+  const text = await callGemini(parts, 8192);
+  const cleaned = text.replace(/```json|```/g, '').trim();
+  const s = cleaned.indexOf('{'),
+    e = cleaned.lastIndexOf('}');
+  if (s === -1 || e === -1) throw new Error('No JSON in clinical note response');
   return JSON.parse(cleaned.slice(s, e + 1));
 }
 async function getAIAnalysis(tests, patientInfo) {
-  const testSummary = tests.map(t => `${t.name}: ${t.value} ${t.unit} (Ref: ${t.range}) [${t.status}]`).join("\n");
-  const prompt = `You are a medical report analysis AI. Analyze the lab results and respond ONLY with valid JSON — no markdown, no backticks, no explanation.
-Schema:
-{
-  "summary": "1-2 sentence overall summary of health picture",
-  "sections": [
-    {
-      "title": "Section title (e.g. Key Findings, Abnormal Values, What's Normal, Recommendations)",
-      "icon": "one of: findings | warning | check | recommend",
-      "points": ["Bullet point 1", "Bullet point 2"]
-    }
-  ]
-}
-Rules:
-- Always include a "Key Findings" section with 2-4 bullets
-- If any tests are abnormal, include an "Abnormal Values" section explaining each one simply
-- Include a "What's Normal" section highlighting reassuring results
-- Include a "Next Steps" section with 1-3 actionable recommendations
-- Keep each bullet point concise (1 sentence max)
-- Plain language, no jargon — patient-friendly
-- Never diagnose, always frame as informational
-Patient: ${patientInfo.name || "Unknown"}, Age: ${patientInfo.age || "Unknown"}, Sex: ${patientInfo.sex || "Unknown"}
-Test Results:
-${testSummary}
-Respond ONLY with the JSON object.`;
-  let response;
+  const lines = tests.map(function (t) {
+    return t.name + ': ' + t.value + ' ' + t.unit + ' (Ref: ' + t.range + ') [' + t.status + ']';
+  });
+  const testSummary = lines.join('\n');
+  const prompt = 'You are a medical report analysis AI. Analyze the lab results and respond ONLY with valid JSON. No markdown, no backticks.\n\n' + 'Schema:{"summary":"1-2 sentence overall summary","sections":[{"title":"Section title","icon":"findings|warning|check|recommend","points":["Bullet"]}]}\n\n' + 'Rules:\n- Always include Key Findings with 2-4 bullets\n- Abnormal Values section if any abnormal\n- What is Normal section\n- Next Steps section\n- One sentence per bullet, patient-friendly\n\n' + 'Patient: ' + (patientInfo.name || 'Unknown') + ', Age: ' + (patientInfo.age || 'Unknown') + ', Sex: ' + (patientInfo.sex || 'Unknown') + '\n\n' + 'Test Results:\n' + testSummary + '\n\nOutput ONLY the JSON object.';
   try {
-    response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: apiHeaders(),
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1500,
-        messages: [{
-          role: "user",
-          content: prompt
-        }]
-      })
-    });
-  } catch (e) {
-    return null;
-  }
-  if (!response.ok) return null;
-  try {
-    const data = await response.json();
-    if (data.error) return null;
-    const text = data.content?.map(b => b.text || "").join("") || "";
-    const cleaned = text.replace(/```json|```/g, "").trim();
-    const start = cleaned.indexOf("{"),
-      end = cleaned.lastIndexOf("}");
-    if (start === -1 || end === -1) return null;
-    return JSON.parse(cleaned.slice(start, end + 1));
-  } catch (e) {
+    var text = await callGemini([{
+      text: prompt
+    }], 2000);
+    var cleaned = text.replace(/```json|```/g, '').trim();
+    var s = cleaned.indexOf('{'),
+      e = cleaned.lastIndexOf('}');
+    if (s === -1 || e === -1) return null;
+    return JSON.parse(cleaned.slice(s, e + 1));
+  } catch (err) {
     return null;
   }
 }
@@ -1288,9 +1081,6 @@ function MyHealthPlus() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisData, setAnalysisData] = useState(null);
   const [showReportViewer, setShowReportViewer] = useState(false);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('mhp_api_key') || '');
-  const [apiKeyInput, setApiKeyInput] = useState('');
-  const [showApiSetup, setShowApiSetup] = useState(() => !localStorage.getItem('mhp_api_key'));
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState("patients");
   const [editingPatient, setEditingPatient] = useState(null);
@@ -6208,125 +5998,7 @@ function MyHealthPlus() {
         .group-scroll-wrap:hover .group-scroll-arrow { opacity: 0.6 !important; }
         .group-scroll-arrow:hover { opacity: 1 !important; }
         body { margin: 0; padding: 0; background: ${theme.bg}; }
-      `), activeTab === "home" && /*#__PURE__*/React.createElement(HomeScreen, null), activeTab === "patients" && /*#__PURE__*/React.createElement(PatientsScreen, null), activeTab === "trends" && /*#__PURE__*/React.createElement(TrendsScreen, null), activeTab === "results" && /*#__PURE__*/React.createElement(ResultTreeScreen, null), /*#__PURE__*/React.createElement(BottomNav, null), showApiSetup && /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'fixed',
-      inset: 0,
-      zIndex: 500,
-      background: '#D97757',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 32
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 72,
-      height: 72,
-      borderRadius: 20,
-      background: 'rgba(255,255,255,0.2)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 24
-    }
-  }, /*#__PURE__*/React.createElement("svg", {
-    width: "36",
-    height: "36",
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "white",
-    strokeWidth: "2"
-  }, /*#__PURE__*/React.createElement("rect", {
-    x: "3",
-    y: "11",
-    width: "18",
-    height: "11",
-    rx: "2"
-  }), /*#__PURE__*/React.createElement("path", {
-    d: "M7 11V7a5 5 0 0110 0v4"
-  }))), /*#__PURE__*/React.createElement("h2", {
-    style: {
-      color: 'white',
-      fontSize: 26,
-      fontWeight: 700,
-      marginBottom: 8,
-      textAlign: 'center'
-    }
-  }, "API Key Required"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      color: 'rgba(255,255,255,0.85)',
-      fontSize: 14,
-      textAlign: 'center',
-      lineHeight: 1.6,
-      marginBottom: 32,
-      maxWidth: 300
-    }
-  }, "My Health Plus uses Claude AI to read your reports. Enter your Anthropic API key \u2014 stored only on this device, never shared."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: '100%',
-      maxWidth: 340,
-      marginBottom: 12
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "password",
-    placeholder: "sk-ant-api03-...",
-    value: apiKeyInput,
-    onChange: e => setApiKeyInput(e.target.value),
-    style: {
-      width: '100%',
-      padding: '14px 16px',
-      borderRadius: 14,
-      border: 'none',
-      fontSize: 14,
-      outline: 'none',
-      background: 'rgba(255,255,255,0.95)',
-      color: '#1A2138'
-    }
-  })), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      const key = apiKeyInput.trim();
-      if (!key.startsWith('sk-ant-')) {
-        alert('Please enter a valid Anthropic API key (starts with sk-ant-)');
-        return;
-      }
-      localStorage.setItem('mhp_api_key', key);
-      setApiKey(key);
-      setShowApiSetup(false);
-    },
-    style: {
-      width: '100%',
-      maxWidth: 340,
-      padding: 16,
-      background: '#1A2138',
-      color: 'white',
-      border: 'none',
-      borderRadius: 14,
-      fontSize: 16,
-      fontWeight: 700,
-      cursor: 'pointer',
-      marginBottom: 16
-    }
-  }, "Save & Continue"), /*#__PURE__*/React.createElement("a", {
-    href: "https://console.anthropic.com/settings/keys",
-    target: "_blank",
-    rel: "noreferrer",
-    style: {
-      color: 'rgba(255,255,255,0.75)',
-      fontSize: 13,
-      textDecoration: 'underline'
-    }
-  }, "Get a free API key from Anthropic \u2192"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      color: 'rgba(255,255,255,0.55)',
-      fontSize: 11,
-      textAlign: 'center',
-      marginTop: 24,
-      maxWidth: 300,
-      lineHeight: 1.5
-    }
-  }, "Your key is saved in this device's local storage only and is sent directly to api.anthropic.com \u2014 never to any other server.")), showUpload && UploadModal(), showAnalysis && AnalysisModal(), showSettings && /*#__PURE__*/React.createElement("div", {
+      `), activeTab === "home" && /*#__PURE__*/React.createElement(HomeScreen, null), activeTab === "patients" && /*#__PURE__*/React.createElement(PatientsScreen, null), activeTab === "trends" && /*#__PURE__*/React.createElement(TrendsScreen, null), activeTab === "results" && /*#__PURE__*/React.createElement(ResultTreeScreen, null), /*#__PURE__*/React.createElement(BottomNav, null), showUpload && UploadModal(), showAnalysis && AnalysisModal(), showSettings && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "fixed",
       inset: 0,
