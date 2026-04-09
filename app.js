@@ -52,7 +52,7 @@ function readAsArrayBuffer(file) {
     reader.readAsArrayBuffer(file);
   });
 }
-const GEMINI_KEY = 'AIzaSyAno217DPl53I4K5xrXx21C0fKAEoZys4g';
+const GEMINI_KEY = 'AIzaSyDFA-zIrlW0ceT91FiK8XaXqnGRPjFMmeo';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_KEY;
 async function callGemini(parts, maxTokens) {
   maxTokens = maxTokens || 8192;
