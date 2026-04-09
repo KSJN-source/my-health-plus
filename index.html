@@ -39,45 +39,26 @@
   <div id="splash-bar"></div>
 </div>
 <div id="root"></div>
+
 <div id="ios-tip">
   To install: tap <strong>Share ↑</strong> then <strong>Add to Home Screen</strong><br/>
-  <button onclick="this.closest('#ios-tip').classList.remove('show');localStorage.setItem('ios-tip-shown','1')" style="margin-top:8px;background:#D97757;color:white;border:none;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:600">Got it</button>
+  <button onclick="document.getElementById('ios-tip').classList.remove('show');localStorage.setItem('ios-tip-shown','1')" style="margin-top:8px;background:#D97757;color:white;border:none;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:600">Got it</button>
 </div>
 <div id="install-banner">
-  <p>Install <strong>My Health Plus</strong> for the best experience.</p>
+  <p>Install <strong>My Health Plus</strong> on your home screen.</p>
   <button id="install-btn" style="background:#D97757;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">Install</button>
   <button onclick="document.getElementById('install-banner').classList.remove('show');localStorage.setItem('install-dismissed','1')" style="background:transparent;border:none;color:rgba(255,255,255,.5);font-size:18px;cursor:pointer;padding:4px">✕</button>
 </div>
 
+<!-- React (synchronous, before app) -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js"></script>
-<script>
-(function(){
-  function showError(msg){
-    document.getElementById('splash').innerHTML='<p style="color:white;padding:30px;text-align:center;font-size:14px;line-height:1.8">⚠️ Failed to load app<br/><br/>'+msg+'</p>';
-  }
-  function loadScript(src,cb){
-    var s=document.createElement('script');
-    s.src=src;s.onload=cb;
-    s.onerror=function(){showError('Could not load: '+src);};
-    document.head.appendChild(s);
-  }
-  function runApp(){
-    fetch('./app.jsx?cb='+Date.now())
-      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status+' loading app.jsx');return r.text();})
-      .then(function(jsx){
-        try{
-          var code=Babel.transform(jsx,{presets:['react']}).code;
-          // indirect eval runs in global scope
-          (0, eval)(code);
-        }catch(e){showError('Compile error: '+e.message);}
-      })
-      .catch(function(e){showError(''+e.message);});
-  }
-  loadScript('https://unpkg.com/@babel/standalone/babel.min.js',runApp);
-})();
-</script>
+
+<!-- Pre-compiled app — no Babel needed, loads and runs directly -->
+<script src="app.js"></script>
+
+<!-- PWA & install logic -->
 <script>
 if('serviceWorker' in navigator){
   window.addEventListener('load',function(){navigator.serviceWorker.register('./sw.js');});
@@ -95,7 +76,7 @@ document.getElementById('install-btn').addEventListener('click',function(){
 var isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
 var isStandalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone;
 if(isIOS&&!isStandalone&&!localStorage.getItem('ios-tip-shown'))
-  setTimeout(function(){document.getElementById('ios-tip').classList.add('show');},4000);
+  setTimeout(function(){document.getElementById('ios-tip').classList.add('show');},5000);
 </script>
 </body>
 </html>
