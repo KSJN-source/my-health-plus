@@ -46,6 +46,17 @@ function readAsArrayBuffer(file) {
     reader.readAsArrayBuffer(file);
   });
 }
+
+function getApiKey() { return localStorage.getItem('mhp_api_key') || ''; }
+function apiHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'x-api-key': getApiKey(),
+    'anthropic-version': '2023-06-01',
+    'anthropic-dangerous-direct-browser-access': 'true'
+  };
+}
+
 async function extractTextFromPDF(file) {
   const pdfjsLib = await loadPDFJS();
   const arrayBuffer = await readAsArrayBuffer(file);
@@ -143,7 +154,7 @@ Rules:
   try {
     response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: apiHeaders(),
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 8192,
@@ -235,7 +246,7 @@ async function detectReportType(content, isImage, imageBase64, mimeType) {
     try {
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: apiHeaders(),
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 20,
@@ -286,7 +297,7 @@ Rules:
   }
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: apiHeaders(),
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
@@ -359,7 +370,7 @@ Rules:
   }
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: apiHeaders(),
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
       max_tokens: 8192,
@@ -406,7 +417,7 @@ Respond ONLY with the JSON object.`;
   try {
     response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: apiHeaders(),
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 1500,
@@ -698,6 +709,9 @@ function MyHealthPlus() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisData, setAnalysisData] = useState(null); 
   const [showReportViewer, setShowReportViewer] = useState(false);
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('mhp_api_key') || '');
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [showApiSetup, setShowApiSetup] = useState(() => !localStorage.getItem('mhp_api_key'));
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState("patients"); 
   const [editingPatient, setEditingPatient] = useState(null);
@@ -894,7 +908,7 @@ function MyHealthPlus() {
     setEditName(""); setEditAge(""); setEditSex(""); setEditPhone(""); setEditAddress("");
     setFileQueue([]); setQueueIndex(0); setBatchMode(null); setSinglePatientId(null);
     
-    try { if (fileInputRef.current) fileInputRef.current.value = ""; } catch(e) {}
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
   const processFile = useCallback(async (file) => {
     if (!file) return;
@@ -1267,13 +1281,14 @@ function MyHealthPlus() {
         </div>
         {/* SELECT FILE */}
         {uploadStep === "select" && (<>
-          <label htmlFor="mhp-file-input" style={{ display: "block", border: "2px dashed " + theme.primary + "40", borderRadius: 16, padding: 40, textAlign: "center", cursor: "pointer", background: theme.primary + "05", marginBottom: 16 }}>
+          <div onClick={() => fileInputRef.current?.click()} style={{ border: "2px dashed " + theme.primary + "40", borderRadius: 16, padding: 40, textAlign: "center", cursor: "pointer", background: theme.primary + "05", marginBottom: 16 }}>
             <div style={{ width: 64, height: 64, borderRadius: 20, background: theme.primary + "15", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><Icon type="upload" size={28} color={theme.primary}/></div>
             <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: theme.text, marginBottom: 6 }}>Tap to select reports</p>
             <p style={{ margin: 0, fontSize: 13, color: theme.textSecondary }}>PDF, Word (.docx), JPEG, PNG — select multiple</p>
-            <input id="mhp-file-input" ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.heic,.heif,.bmp,.gif,application/pdf,image/*,.tiff,.tif" style={{ position: "absolute", opacity: 0, width: 0, height: 0, pointerEvents: "none" }} onChange={(e) => {
+            <input ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.heic,.heif,.bmp,.gif,application/pdf,image/*,.tiff,.tif" style={{ display: "none" }} onChange={(e) => {
               const files = Array.from(e.target.files || []);
               if (files.length === 0) return;
+              
               e.target.value = "";
               setFileQueue(files);
               setQueueIndex(0);
@@ -1284,7 +1299,7 @@ function MyHealthPlus() {
                 processFile(files[0]);
               }
             }}/>
-          </label>
+          </div>
           <div style={{ background: theme.primary + "08", borderRadius: 12, padding: 14, display: "flex", gap: 10, alignItems: "flex-start" }}>
             <Icon type="ai" size={20} color={theme.primary}/>
             <div>
@@ -2597,6 +2612,38 @@ function MyHealthPlus() {
       {activeTab === "trends" && <TrendsScreen/>}
       {activeTab === "results" && <ResultTreeScreen/>}
       <BottomNav/>
+      {showApiSetup && (
+        <div style={{position:'fixed',inset:0,zIndex:500,background:'#D97757',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:32}}>
+          <div style={{width:72,height:72,borderRadius:20,background:'rgba(255,255,255,0.2)',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:24}}>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+          </div>
+          <h2 style={{color:'white',fontSize:26,fontWeight:700,marginBottom:8,textAlign:'center'}}>API Key Required</h2>
+          <p style={{color:'rgba(255,255,255,0.85)',fontSize:14,textAlign:'center',lineHeight:1.6,marginBottom:32,maxWidth:300}}>
+            My Health Plus uses Claude AI to read your reports. Enter your Anthropic API key — stored only on this device, never shared.
+          </p>
+          <div style={{width:'100%',maxWidth:340,marginBottom:12}}>
+            <input type="password" placeholder="sk-ant-api03-..." value={apiKeyInput}
+              onChange={e => setApiKeyInput(e.target.value)}
+              style={{width:'100%',padding:'14px 16px',borderRadius:14,border:'none',fontSize:14,outline:'none',background:'rgba(255,255,255,0.95)',color:'#1A2138'}}/>
+          </div>
+          <button onClick={() => {
+            const key = apiKeyInput.trim();
+            if (!key.startsWith('sk-ant-')) { alert('Please enter a valid Anthropic API key (starts with sk-ant-)'); return; }
+            localStorage.setItem('mhp_api_key', key);
+            setApiKey(key);
+            setShowApiSetup(false);
+          }} style={{width:'100%',maxWidth:340,padding:16,background:'#1A2138',color:'white',border:'none',borderRadius:14,fontSize:16,fontWeight:700,cursor:'pointer',marginBottom:16}}>
+            Save & Continue
+          </button>
+          <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer"
+            style={{color:'rgba(255,255,255,0.75)',fontSize:13,textDecoration:'underline'}}>
+            Get a free API key from Anthropic →
+          </a>
+          <p style={{color:'rgba(255,255,255,0.55)',fontSize:11,textAlign:'center',marginTop:24,maxWidth:300,lineHeight:1.5}}>
+            Your key is saved in this device's local storage only and is sent directly to api.anthropic.com — never to any other server.
+          </p>
+        </div>
+      )}
       {showUpload && UploadModal()}
       {showAnalysis && AnalysisModal()}
       {showSettings && (
@@ -2839,22 +2886,3 @@ function MyHealthPlus() {
     </div>
   );
 }
-window.MyHealthPlus = MyHealthPlus;
-
-// Auto-mount when Babel finishes compiling this script
-(function() {
-  function mount() {
-    var root = document.getElementById('root');
-    if (!root) return;
-    ReactDOM.createRoot(root).render(React.createElement(MyHealthPlus));
-    setTimeout(function() {
-      var s = document.getElementById('splash');
-      if (s) { s.classList.add('hidden'); setTimeout(function(){ s.remove(); }, 600); }
-    }, 400);
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mount);
-  } else {
-    mount();
-  }
-})();
